@@ -1,0 +1,32 @@
+name: pokecam_app
+description: Pokemon card centering analyzer.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Camera live preview and capture
+  camera: ^0.10.5+9
+
+  # HTTP multipart upload to backend
+  http: ^1.2.1
+  http_parser: ^4.0.2
+
+  # Explicit camera permission requests (required on iOS + Android)
+  permission_handler: ^11.3.1
+
+  # Pick from photo gallery (optional convenience for testing)
+  image_picker: ^1.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true

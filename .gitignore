@@ -1,0 +1,19 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+**/__pycache__/
+**/*.pyc
+
+# Test images and debug output — large binaries, not source
+backend/test_images/
+
+# Flutter
+mobile/pokecam_app/.dart_tool/
+mobile/pokecam_app/build/
+mobile/pokecam_app/.flutter-plugins
+mobile/pokecam_app/.flutter-plugins-dependencies
+
+# macOS
+.DS_Store
