@@ -279,17 +279,27 @@ def save_debug_images(path: str, out_dir: str, threshold_frac: float = 0.15, ski
     # ── Step 4: Inner border measurements ────────────────────────────────────
     inner = _find_inner_borders(card)
 
-    # Base: context warp (real photo background) + footer strip for summary
-    FOOTER    = 90
-    ctx4, cw4, ch4 = _warp_with_context(img, corners)
-    full_h    = ctx4.shape[0] + FOOTER
-    canvas    = np.full((full_h, ctx4.shape[1], 3), BG, dtype=np.uint8)
-    canvas[:ctx4.shape[0], :] = ctx4
-    card_h, card_w = ch4, cw4   # card dims within canvas (offset by CTX)
+    # Scale factor: keep proportions relative to a 1000px-wide reference card.
+    # ctx_cw is the card pixel width computed during step 3.
+    ts = max(1.0, ctx_cw / 600)
+    ti = lambda v: max(1, int(round(v * ts)))   # scaled int (px / thickness)
+    tf = lambda v: v * ts                        # scaled float (font scale)
 
-    # Green card-boundary guide
-    cv2.rectangle(canvas, (CTX, CTX), (CTX + card_w - 1, CTX + card_h - 1),
-                  (70, 70, 70), 1)
+    # Context zone wide enough to comfortably hold side-label badges
+    CTX4   = ti(90)
+    FOOTER = ti(110)
+    ctx4, cw4, ch4 = _warp_with_context(img, corners, ctx=CTX4)
+    full_h  = ctx4.shape[0] + FOOTER
+    canvas  = np.full((full_h, ctx4.shape[1], 3), BG, dtype=np.uint8)
+    canvas[:ctx4.shape[0], :] = ctx4
+    card_h, card_w = ch4, cw4
+
+    # Separator line between card image and footer
+    cv2.line(canvas, (0, ctx4.shape[0]), (canvas.shape[1], ctx4.shape[0]),
+             (55, 55, 55), ti(2))
+    # Subtle card-boundary guide
+    cv2.rectangle(canvas, (CTX4, CTX4), (CTX4 + card_w - 1, CTX4 + card_h - 1),
+                  (60, 60, 60), ti(1))
 
     if inner is not None:
         left_px, right_px, top_px, bot_px, inner_c = inner
@@ -298,106 +308,78 @@ def save_debug_images(path: str, out_dir: str, threshold_frac: float = 0.15, ski
         top_px   = int(round(top_px))
         bot_px   = int(round(bot_px))
 
-        # Bright green inner-border rectangle (offset by CTX into canvas coords)
+        # Inner-border rectangle
         cv2.rectangle(canvas,
-                      (CTX + left_px,            CTX + top_px),
-                      (CTX + card_w - right_px,  CTX + card_h - bot_px),
-                      (0, 230, 100), 2)
+                      (CTX4 + left_px,            CTX4 + top_px),
+                      (CTX4 + card_w - right_px,  CTX4 + card_h - bot_px),
+                      (0, 230, 100), ti(3))
 
-        mid_y = CTX + card_h // 2
-        mid_x = CTX + card_w // 2
+        mid_y = CTX4 + card_h // 2
+        mid_x = CTX4 + card_w // 2
 
-        LR_CLR  = (80, 150, 255)   # warm orange
-        TB_CLR  = (255, 190, 80)   # sky blue
-        ARROW_T = 2
-        TIP_LEN = 0.25             # tipLength relative to arrow length
-
-        # Each arrow runs exactly from the card edge pixel to the inner border
-        # pixel — no badge interrupts it.  The label lives entirely in the CTX
-        # background zone and is connected to the arrow's tail by a short tick.
-        #
-        # Layout:
-        #   Left  : arrow (CTX → CTX+left_px), label in left background strip
-        #   Right : arrow (CTX+card_w-1 → CTX+card_w-right_px), label right bg
-        #   Top   : arrow (CTX → CTX+top_px), label in top background strip
-        #   Bottom: arrow (CTX+card_h-1 → CTX+card_h-bot_px), label bottom bg
-
-        TICK = 8   # length of the small perpendicular tick at arrow tail
+        LR_CLR  = (80, 150, 255)
+        TB_CLR  = (255, 190, 80)
+        ARROW_T = ti(3)
+        TIP_LEN = 0.20
 
         def _side_label(text, anchor_x, anchor_y, color, side):
-            """
-            Draw label badge in the background zone beside `side` ('L','R','T','B').
-            A short tick line connects the badge to the card edge.
-            """
-            font  = cv2.FONT_HERSHEY_SIMPLEX
-            fscale, fthick = 0.60, 2
+            font   = cv2.FONT_HERSHEY_SIMPLEX
+            fscale = tf(0.55)
+            fthick = ti(2)
+            gap    = ti(8)
+            pad    = ti(10)
             (tw, th), bl = cv2.getTextSize(text, font, fscale, fthick)
-            pad = 6
             if side == 'L':
-                # badge to the left of card edge
-                bx2 = anchor_x - 6
+                bx2 = anchor_x - gap
                 bx1 = bx2 - tw - pad * 2
                 by1 = anchor_y - th // 2 - pad
                 by2 = anchor_y + th // 2 + pad + bl
                 tx  = bx1 + pad
                 ty  = anchor_y + th // 2
-                # tick: short horizontal line from badge right edge to card edge
-                cv2.line(canvas, (bx2, anchor_y), (anchor_x, anchor_y), color, 1)
+                cv2.line(canvas, (bx2, anchor_y), (anchor_x, anchor_y), color, ti(1))
             elif side == 'R':
-                bx1 = anchor_x + 6
+                bx1 = anchor_x + gap
                 bx2 = bx1 + tw + pad * 2
                 by1 = anchor_y - th // 2 - pad
                 by2 = anchor_y + th // 2 + pad + bl
                 tx  = bx1 + pad
                 ty  = anchor_y + th // 2
-                cv2.line(canvas, (anchor_x, anchor_y), (bx1, anchor_y), color, 1)
+                cv2.line(canvas, (anchor_x, anchor_y), (bx1, anchor_y), color, ti(1))
             elif side == 'T':
-                by2 = anchor_y - 6
+                by2 = anchor_y - gap
                 by1 = by2 - th - pad * 2
                 bx1 = anchor_x - tw // 2 - pad
                 bx2 = anchor_x + tw // 2 + pad
                 tx  = bx1 + pad
                 ty  = by2 - pad // 2
-                cv2.line(canvas, (anchor_x, by2), (anchor_x, anchor_y), color, 1)
+                cv2.line(canvas, (anchor_x, by2), (anchor_x, anchor_y), color, ti(1))
             else:  # 'B'
-                by1 = anchor_y + 6
+                by1 = anchor_y + gap
                 by2 = by1 + th + pad * 2
                 bx1 = anchor_x - tw // 2 - pad
                 bx2 = anchor_x + tw // 2 + pad
                 tx  = bx1 + pad
                 ty  = by1 + th + pad // 2
-                cv2.line(canvas, (anchor_x, anchor_y), (anchor_x, by1), color, 1)
-
-            cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (18, 18, 18), -1)
+                cv2.line(canvas, (anchor_x, anchor_y), (anchor_x, by1), color, ti(1))
+            cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (28, 28, 28), -1)
+            cv2.rectangle(canvas, (bx1, by1), (bx2, by2), color, ti(1))
             cv2.putText(canvas, text, (tx, ty), font, fscale, color, fthick, cv2.LINE_AA)
 
-        # ── Left ──────────────────────────────────────────────────────────────
-        cv2.arrowedLine(canvas,
-                        (CTX,          mid_y),
-                        (CTX + left_px, mid_y),
+        cv2.arrowedLine(canvas, (CTX4, mid_y), (CTX4 + left_px, mid_y),
                         LR_CLR, ARROW_T, tipLength=TIP_LEN)
-        _side_label(f"L  {left_px}px", CTX, mid_y, LR_CLR, 'L')
+        _side_label(f"L  {left_px}px", CTX4, mid_y, LR_CLR, 'L')
 
-        # ── Right ─────────────────────────────────────────────────────────────
-        cv2.arrowedLine(canvas,
-                        (CTX + card_w - 1,       mid_y),
-                        (CTX + card_w - right_px, mid_y),
+        cv2.arrowedLine(canvas, (CTX4 + card_w - 1, mid_y), (CTX4 + card_w - right_px, mid_y),
                         LR_CLR, ARROW_T, tipLength=TIP_LEN)
-        _side_label(f"R  {right_px}px", CTX + card_w - 1, mid_y, LR_CLR, 'R')
+        _side_label(f"R  {right_px}px", CTX4 + card_w - 1, mid_y, LR_CLR, 'R')
 
-        # ── Top ───────────────────────────────────────────────────────────────
-        cv2.arrowedLine(canvas,
-                        (mid_x, CTX),
-                        (mid_x, CTX + top_px),
+        cv2.arrowedLine(canvas, (mid_x, CTX4), (mid_x, CTX4 + top_px),
                         TB_CLR, ARROW_T, tipLength=TIP_LEN)
-        _side_label(f"T  {top_px}px", mid_x, CTX, TB_CLR, 'T')
+        _side_label(f"T  {top_px}px", mid_x, CTX4, TB_CLR, 'T')
 
-        # ── Bottom ────────────────────────────────────────────────────────────
-        cv2.arrowedLine(canvas,
-                        (mid_x, CTX + card_h - 1),
-                        (mid_x, CTX + card_h - bot_px),
+        cv2.arrowedLine(canvas, (mid_x, CTX4 + card_h - 1), (mid_x, CTX4 + card_h - bot_px),
                         TB_CLR, ARROW_T, tipLength=TIP_LEN)
-        _side_label(f"B  {bot_px}px", mid_x, CTX + card_h - 1, TB_CLR, 'B')
+        _side_label(f"B  {bot_px}px", mid_x, CTX4 + card_h - 1, TB_CLR, 'B')
 
         # ── Footer summary ────────────────────────────────────────────────────
         lr_total = left_px + right_px
@@ -411,50 +393,65 @@ def save_debug_images(path: str, out_dir: str, threshold_frac: float = 0.15, ski
         psa9_tb  = abs(tb_pct - 50) <= 10
 
         if psa10_lr and psa10_tb:
-            grade_txt, grade_clr = "PSA 10", (80, 220, 80)
+            grade_txt, grade_clr = "PSA 10", (50, 200, 50)
         elif psa9_lr and psa9_tb:
-            grade_txt, grade_clr = "PSA 9",  (80, 200, 255)
+            grade_txt, grade_clr = "PSA 9",  (50, 180, 240)
         else:
-            grade_txt, grade_clr = "< PSA 9", (80, 80, 255)
+            grade_txt, grade_clr = "< PSA 9", (60, 60, 220)
 
+        font     = cv2.FONT_HERSHEY_SIMPLEX
+        fy       = ctx4.shape[0] + ti(14)
         canvas_w = canvas.shape[1]
-        fy   = ctx4.shape[0] + 8   # footer y-start (just below the warped region)
-        font = cv2.FONT_HERSHEY_SIMPLEX
 
+        # LR column
         lr_ratio = f"{round(lr_pct)}/{100 - round(lr_pct)}"
-        cv2.putText(canvas, "LR", (CTX, fy + 22),
-                    font, 0.55, (160, 160, 160), 1, cv2.LINE_AA)
-        cv2.putText(canvas, lr_ratio, (CTX, fy + 48),
-                    font, 0.9, LR_CLR, 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"{lr_pct:.1f}%", (CTX, fy + 70),
-                    font, 0.5, (180, 180, 180), 1, cv2.LINE_AA)
+        cv2.putText(canvas, "LR", (CTX4, fy + ti(24)),
+                    font, tf(0.50), (120, 120, 120), ti(1), cv2.LINE_AA)
+        cv2.putText(canvas, lr_ratio, (CTX4, fy + ti(58)),
+                    font, tf(1.0), LR_CLR, ti(2), cv2.LINE_AA)
+        cv2.putText(canvas, f"{lr_pct:.1f}%", (CTX4, fy + ti(80)),
+                    font, tf(0.48), (160, 160, 160), ti(1), cv2.LINE_AA)
 
+        # TB column
+        tx = CTX4 + ti(140)
         tb_ratio = f"{round(tb_pct)}/{100 - round(tb_pct)}"
-        tx = CTX + 120
-        cv2.putText(canvas, "TB", (tx, fy + 22),
-                    font, 0.55, (160, 160, 160), 1, cv2.LINE_AA)
-        cv2.putText(canvas, tb_ratio, (tx, fy + 48),
-                    font, 0.9, TB_CLR, 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"{tb_pct:.1f}%", (tx, fy + 70),
-                    font, 0.5, (180, 180, 180), 1, cv2.LINE_AA)
+        cv2.putText(canvas, "TB", (tx, fy + ti(24)),
+                    font, tf(0.50), (120, 120, 120), ti(1), cv2.LINE_AA)
+        cv2.putText(canvas, tb_ratio, (tx, fy + ti(58)),
+                    font, tf(1.0), TB_CLR, ti(2), cv2.LINE_AA)
+        cv2.putText(canvas, f"{tb_pct:.1f}%", (tx, fy + ti(80)),
+                    font, tf(0.48), (160, 160, 160), ti(1), cv2.LINE_AA)
 
-        cx2 = CTX + 240
-        cv2.putText(canvas, "CONSISTENCY", (cx2, fy + 22),
-                    font, 0.45, (160, 160, 160), 1, cv2.LINE_AA)
-        cons_clr = (80, 220, 80) if inner_c >= 0.6 else (80, 200, 255) if inner_c >= 0.3 else (80, 80, 255)
-        cv2.putText(canvas, f"{inner_c:.2f}", (cx2, fy + 48),
-                    font, 0.9, cons_clr, 2, cv2.LINE_AA)
+        # Consistency column
+        cx2      = CTX4 + ti(280)
+        cons_clr = (50, 200, 50) if inner_c >= 0.6 else (50, 180, 240) if inner_c >= 0.3 else (60, 60, 220)
+        cv2.putText(canvas, "CONSISTENCY", (cx2, fy + ti(24)),
+                    font, tf(0.45), (120, 120, 120), ti(1), cv2.LINE_AA)
+        cv2.putText(canvas, f"{inner_c:.2f}", (cx2, fy + ti(58)),
+                    font, tf(1.0), cons_clr, ti(2), cv2.LINE_AA)
 
-        gx = canvas_w - 138
-        cv2.rectangle(canvas, (gx - 8, fy + 4), (gx + 130, fy + 58),
-                      grade_clr, -1)
-        cv2.putText(canvas, grade_txt, (gx, fy + 42),
-                    font, 1.0, (20, 20, 20), 2, cv2.LINE_AA)
+        # Grade badge — right-aligned
+        (gtw, gth), gbl = cv2.getTextSize(grade_txt, font, tf(1.1), ti(2))
+        gpad = ti(18)
+        bx1  = canvas_w - gtw - gpad * 2 - ti(20)
+        bx2  = canvas_w - ti(20)
+        by1  = fy + ti(8)
+        by2  = by1 + gth + gpad * 2 + gbl
+        cv2.rectangle(canvas, (bx1, by1), (bx2, by2), grade_clr, -1)
+        cv2.putText(canvas, grade_txt, (bx1 + gpad, by2 - gpad - gbl),
+                    font, tf(1.1), (18, 18, 18), ti(2), cv2.LINE_AA)
 
     else:
-        fy = ctx4.shape[0] + 20
-        cv2.putText(canvas, "No inner border detected", (CTX, fy + 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (80, 80, 255), 2, cv2.LINE_AA)
+        fy = ctx4.shape[0] + ti(20)
+        cv2.putText(canvas, "No inner border detected", (CTX4, fy + ti(55)),
+                    cv2.FONT_HERSHEY_SIMPLEX, tf(0.9), (80, 80, 220), ti(2), cv2.LINE_AA)
+
+    # Resize to a fixed output width so the file is compact and always legible
+    TARGET_W  = 1600
+    out_scale = min(1.0, TARGET_W / canvas.shape[1])
+    if out_scale < 1.0:
+        out_h  = int(canvas.shape[0] * out_scale)
+        canvas = cv2.resize(canvas, (TARGET_W, out_h), interpolation=cv2.INTER_AREA)
 
     p4 = os.path.join(out_dir, f"{stem}_4_borders.jpg")
     cv2.imwrite(p4, canvas)
