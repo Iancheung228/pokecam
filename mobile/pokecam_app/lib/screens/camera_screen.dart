@@ -1,6 +1,5 @@
-import 'dart:io';
-import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
 import '../widgets/result_card.dart';
 
@@ -11,75 +10,22 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen>
-    with WidgetsBindingObserver {
-  CameraController? _controller;
-  bool _isInitialized = false;
+class _CameraScreenState extends State<CameraScreen> {
   bool _isAnalyzing = false;
   Map<String, dynamic>? _result;
   String? _errorMessage;
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _initCamera();
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-    if (state == AppLifecycleState.inactive) {
-      _controller?.dispose();
-    } else if (state == AppLifecycleState.resumed) {
-      _initCamera();
-    }
-  }
-
-  Future<void> _initCamera() async {
-    try {
-      final cameras = await availableCameras();
-      if (cameras.isEmpty) {
-        setState(() => _errorMessage = 'No cameras found on this device.');
-        return;
-      }
-
-      // Prefer back camera; fall back to first available
-      final camera = cameras.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.back,
-        orElse: () => cameras.first,
-      );
-
-      final controller = CameraController(
-        camera,
-        ResolutionPreset.high,
-        enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg,
-      );
-
-      await controller.initialize();
-
-      if (!mounted) return;
-      setState(() {
-        _controller = controller;
-        _isInitialized = true;
-        _errorMessage = null;
-      });
-    } catch (e) {
-      setState(() => _errorMessage = 'Camera error: $e');
-    }
-  }
-
   Future<void> _captureAndAnalyze() async {
-    if (_controller == null || !_controller!.value.isInitialized) return;
     if (_isAnalyzing) return;
+
+    final picker = ImagePicker();
+    final XFile? photo = await picker.pickImage(
+      source: ImageSource.camera,
+      preferredCameraDevice: CameraDevice.rear,
+      imageQuality: 90,
+    );
+
+    if (photo == null) return;
 
     setState(() {
       _isAnalyzing = true;
@@ -88,8 +34,7 @@ class _CameraScreenState extends State<CameraScreen>
     });
 
     try {
-      final XFile photo = await _controller!.takePicture();
-      final result = await ApiService.analyzeCard(File(photo.path));
+      final result = await ApiService.analyzeCard(photo);
       if (!mounted) return;
       setState(() => _result = result);
     } on ApiException catch (e) {
@@ -110,70 +55,173 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (_result != null) {
+      return _ResultPage(
+        data: _result!,
+        onScanAgain: _reset,
+      );
+    }
+
     return Scaffold(
-      body: Stack(
-        children: [
-          // Camera preview fills the screen
-          if (_isInitialized && _controller != null)
-            Positioned.fill(child: CameraPreview(_controller!))
-          else
-            const Center(child: CircularProgressIndicator()),
-
-          // Error banner
-          if (_errorMessage != null)
-            Positioned(
-              bottom: 120,
-              left: 16,
-              right: 16,
-              child: Container(
-                padding: const EdgeInsets.all(12),
+      backgroundColor: const Color(0xFF0A0A0A),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            children: [
+              const Spacer(flex: 2),
+              // Logo area
+              Container(
+                width: 100,
+                height: 100,
                 decoration: BoxDecoration(
-                  color: Colors.red[900],
-                  borderRadius: BorderRadius.circular(8),
+                  shape: BoxShape.circle,
+                  color: Colors.red.withOpacity(0.12),
+                  border: Border.all(color: Colors.red.withOpacity(0.3), width: 1.5),
                 ),
-                child: Text(_errorMessage!,
-                    style: const TextStyle(color: Colors.white)),
+                child: const Icon(Icons.catching_pokemon, size: 54, color: Colors.red),
               ),
-            ),
-
-          // Result overlay
-          if (_result != null)
-            Positioned(
-              bottom: 100,
-              left: 0,
-              right: 0,
-              child: GestureDetector(
-                onTap: _reset,
-                child: ResultCard(data: _result!),
-              ),
-            ),
-
-          // Loading indicator over camera
-          if (_isAnalyzing)
-            const Positioned.fill(
-              child: ColoredBox(
-                color: Colors.black38,
-                child: Center(child: CircularProgressIndicator()),
-              ),
-            ),
-
-          // Shutter button
-          Positioned(
-            bottom: 30,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: FloatingActionButton.large(
-                onPressed: _result != null ? _reset : _captureAndAnalyze,
-                tooltip: _result != null ? 'Take another' : 'Analyze card',
-                child: Icon(
-                  _result != null ? Icons.refresh : Icons.camera_alt,
-                  size: 36,
+              const SizedBox(height: 24),
+              const Text(
+                'Pokecam',
+                style: TextStyle(
+                  fontSize: 36,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                  letterSpacing: 1.2,
                 ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Pokemon card centering\nfor PSA grading',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFF888888),
+                  fontSize: 15,
+                  height: 1.5,
+                ),
+              ),
+              const Spacer(flex: 2),
+
+              // Error message
+              if (_errorMessage != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    color: Colors.red[900]!.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.red[800]!, width: 1),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.red, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _errorMessage!,
+                          style: const TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // Scan button
+              if (_isAnalyzing)
+                const Column(
+                  children: [
+                    CircularProgressIndicator(color: Colors.red),
+                    SizedBox(height: 16),
+                    Text(
+                      'Analyzing card...',
+                      style: TextStyle(color: Color(0xFF888888), fontSize: 14),
+                    ),
+                  ],
+                )
+              else
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _captureAndAnalyze,
+                    icon: const Icon(Icons.camera_alt, size: 22),
+                    label: const Text(
+                      'Scan a Card',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+              const Spacer(flex: 1),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ResultPage extends StatelessWidget {
+  final Map<String, dynamic> data;
+  final VoidCallback onScanAgain;
+
+  const _ResultPage({required this.data, required this.onScanAgain});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A0A0A),
+      body: Column(
+        children: [
+          // Scrollable content
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ResultCard(data: data),
+                  const SizedBox(height: 100), // space above sticky button
+                ],
               ),
             ),
           ),
         ],
+      ),
+      // Sticky scan-again button
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+          child: SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: onScanAgain,
+              icon: const Icon(Icons.camera_alt, size: 20),
+              label: const Text(
+                'Scan Another Card',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                elevation: 0,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

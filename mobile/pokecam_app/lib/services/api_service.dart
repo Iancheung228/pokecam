@@ -1,22 +1,24 @@
 import 'dart:convert';
-import 'dart:io';
+import 'package:cross_file/cross_file.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 class ApiService {
   // Dev: replace with your machine's WiFi IP, e.g. 'http://192.168.1.42:8080'
   // Prod: replace with your Cloud Run URL
-  static const String baseUrl = 'http://localhost:8080';
+  static const String baseUrl = 'https://pokecam-api-633662296510.us-central1.run.app';
 
   /// Sends [imageFile] to the /analyze endpoint and returns the decoded JSON map.
   /// Throws an [ApiException] on non-200 responses.
-  static Future<Map<String, dynamic>> analyzeCard(File imageFile) async {
+  static Future<Map<String, dynamic>> analyzeCard(XFile imageFile) async {
     final uri = Uri.parse('$baseUrl/analyze');
+    final bytes = await imageFile.readAsBytes();
 
     final request = http.MultipartRequest('POST', uri)
-      ..files.add(await http.MultipartFile.fromPath(
+      ..files.add(http.MultipartFile.fromBytes(
         'file',
-        imageFile.path,
+        bytes,
+        filename: 'card.jpg',
         contentType: MediaType('image', 'jpeg'),
       ));
 

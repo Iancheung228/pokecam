@@ -588,9 +588,173 @@ def _psa_grade(pct: float, half_width: float) -> bool:
     return abs(pct - 50.0) <= half_width
 
 
+# ── Debug visualisation ───────────────────────────────────────────────────────
+
+def _warp_with_context(img: np.ndarray, corners: np.ndarray, ctx: int = 160):
+    """
+    Perspective-warp the card but include `ctx` pixels of the surrounding
+    original photo on every side. The card occupies [ctx, ctx] → [ctx+w, ctx+h];
+    outside is warped background from the original photo.
+    Returns (warped_with_context, card_w, card_h).
+    """
+    tl, tr, br, bl = corners
+    cw = int(max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl)))
+    ch = int(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr)))
+    dst = np.array([
+        [ctx,      ctx],
+        [ctx + cw, ctx],
+        [ctx + cw, ctx + ch],
+        [ctx,      ctx + ch],
+    ], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(corners.astype(np.float32), dst)
+    return cv2.warpPerspective(img, M, (cw + 2 * ctx, ch + 2 * ctx)), cw, ch
+
+
+def draw_borders_debug(img: np.ndarray, corners: np.ndarray,
+                       result: CenteringResult, max_width: int = 1600) -> np.ndarray:
+    """
+    Render the _4_borders debug image: warped card with photo context, inner
+    border rectangle, measurement arrows, and footer summary.
+    Identical output to the _4_borders.jpg produced by test_centering.py.
+    """
+    BG = (32, 32, 32)
+
+    # Scale factor relative to a 600px-wide reference card
+    _, ctx_cw, _ = _warp_with_context(img, corners, ctx=0)
+    ts = max(1.0, ctx_cw / 600)
+    ti = lambda v: max(1, int(round(v * ts)))
+    tf = lambda v: v * ts
+
+    CTX4   = ti(90)
+    FOOTER = ti(110)
+    ctx4, card_w, card_h = _warp_with_context(img, corners, ctx=CTX4)
+
+    full_h = ctx4.shape[0] + FOOTER
+    canvas = np.full((full_h, ctx4.shape[1], 3), BG, dtype=np.uint8)
+    canvas[:ctx4.shape[0], :] = ctx4
+
+    cv2.line(canvas, (0, ctx4.shape[0]), (canvas.shape[1], ctx4.shape[0]), (55, 55, 55), ti(2))
+    cv2.rectangle(canvas, (CTX4, CTX4), (CTX4 + card_w - 1, CTX4 + card_h - 1), (60, 60, 60), ti(1))
+
+    LR_CLR = (80, 150, 255)
+    TB_CLR = (255, 190, 80)
+
+    inner_c = result.inner_consistency
+    has_border = result.left_px > 0 or result.right_px > 0
+
+    if has_border:
+        left_px  = result.left_px
+        right_px = result.right_px
+        top_px   = result.top_px
+        bot_px   = result.bottom_px
+
+        cv2.rectangle(canvas,
+                      (CTX4 + left_px,           CTX4 + top_px),
+                      (CTX4 + card_w - right_px, CTX4 + card_h - bot_px),
+                      (0, 230, 100), ti(3))
+
+        mid_y = CTX4 + card_h // 2
+        mid_x = CTX4 + card_w // 2
+
+        def _side_label(text, anchor_x, anchor_y, color, side):
+            font   = cv2.FONT_HERSHEY_SIMPLEX
+            fscale = tf(0.55)
+            fthick = ti(2)
+            gap    = ti(8)
+            pad    = ti(10)
+            (tw, th), bl = cv2.getTextSize(text, font, fscale, fthick)
+            if side == 'L':
+                bx2 = anchor_x - gap;  bx1 = bx2 - tw - pad * 2
+                by1 = anchor_y - th // 2 - pad;  by2 = anchor_y + th // 2 + pad + bl
+                tx = bx1 + pad;  ty = anchor_y + th // 2
+                cv2.line(canvas, (bx2, anchor_y), (anchor_x, anchor_y), color, ti(1))
+            elif side == 'R':
+                bx1 = anchor_x + gap;  bx2 = bx1 + tw + pad * 2
+                by1 = anchor_y - th // 2 - pad;  by2 = anchor_y + th // 2 + pad + bl
+                tx = bx1 + pad;  ty = anchor_y + th // 2
+                cv2.line(canvas, (anchor_x, anchor_y), (bx1, anchor_y), color, ti(1))
+            elif side == 'T':
+                by2 = anchor_y - gap;  by1 = by2 - th - pad * 2
+                bx1 = anchor_x - tw // 2 - pad;  bx2 = anchor_x + tw // 2 + pad
+                tx = bx1 + pad;  ty = by2 - pad // 2
+                cv2.line(canvas, (anchor_x, by2), (anchor_x, anchor_y), color, ti(1))
+            else:
+                by1 = anchor_y + gap;  by2 = by1 + th + pad * 2
+                bx1 = anchor_x - tw // 2 - pad;  bx2 = anchor_x + tw // 2 + pad
+                tx = bx1 + pad;  ty = by1 + th + pad // 2
+                cv2.line(canvas, (anchor_x, anchor_y), (anchor_x, by1), color, ti(1))
+            cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (28, 28, 28), -1)
+            cv2.rectangle(canvas, (bx1, by1), (bx2, by2), color, ti(1))
+            cv2.putText(canvas, text, (tx, ty), font, fscale, color, fthick, cv2.LINE_AA)
+
+        cv2.arrowedLine(canvas, (CTX4, mid_y), (CTX4 + left_px, mid_y),        LR_CLR, ti(3), tipLength=0.20)
+        _side_label(f"L  {left_px}px",  CTX4,              mid_y, LR_CLR, 'L')
+        cv2.arrowedLine(canvas, (CTX4 + card_w - 1, mid_y), (CTX4 + card_w - right_px, mid_y), LR_CLR, ti(3), tipLength=0.20)
+        _side_label(f"R  {right_px}px", CTX4 + card_w - 1, mid_y, LR_CLR, 'R')
+        cv2.arrowedLine(canvas, (mid_x, CTX4), (mid_x, CTX4 + top_px),         TB_CLR, ti(3), tipLength=0.20)
+        _side_label(f"T  {top_px}px",   mid_x, CTX4,              TB_CLR, 'T')
+        cv2.arrowedLine(canvas, (mid_x, CTX4 + card_h - 1), (mid_x, CTX4 + card_h - bot_px), TB_CLR, ti(3), tipLength=0.20)
+        _side_label(f"B  {bot_px}px",   mid_x, CTX4 + card_h - 1, TB_CLR, 'B')
+
+        # Footer
+        lr_total = left_px + right_px
+        tb_total = top_px  + bot_px
+        lr_pct   = left_px / lr_total * 100 if lr_total > 0 else 50.0
+        tb_pct   = top_px  / tb_total * 100 if tb_total > 0 else 50.0
+
+        if result.psa10_lr_pass and result.psa10_tb_pass:
+            grade_txt, grade_clr = "PSA 10", (50, 200, 50)
+        elif result.psa9_lr_pass and result.psa9_tb_pass:
+            grade_txt, grade_clr = "PSA 9",  (50, 180, 240)
+        else:
+            grade_txt, grade_clr = "< PSA 9", (60, 60, 220)
+
+        font     = cv2.FONT_HERSHEY_SIMPLEX
+        fy       = ctx4.shape[0] + ti(14)
+        canvas_w = canvas.shape[1]
+
+        lr_ratio_txt = f"{round(lr_pct)}/{100 - round(lr_pct)}"
+        cv2.putText(canvas, "LR",          (CTX4, fy + ti(24)), font, tf(0.50), (120,120,120), ti(1), cv2.LINE_AA)
+        cv2.putText(canvas, lr_ratio_txt,  (CTX4, fy + ti(58)), font, tf(1.0),  LR_CLR,        ti(2), cv2.LINE_AA)
+        cv2.putText(canvas, f"{lr_pct:.1f}%", (CTX4, fy + ti(80)), font, tf(0.48), (160,160,160), ti(1), cv2.LINE_AA)
+
+        tx = CTX4 + ti(140)
+        tb_ratio_txt = f"{round(tb_pct)}/{100 - round(tb_pct)}"
+        cv2.putText(canvas, "TB",          (tx, fy + ti(24)), font, tf(0.50), (120,120,120), ti(1), cv2.LINE_AA)
+        cv2.putText(canvas, tb_ratio_txt,  (tx, fy + ti(58)), font, tf(1.0),  TB_CLR,        ti(2), cv2.LINE_AA)
+        cv2.putText(canvas, f"{tb_pct:.1f}%", (tx, fy + ti(80)), font, tf(0.48), (160,160,160), ti(1), cv2.LINE_AA)
+
+        cx2      = CTX4 + ti(280)
+        cons_clr = (50,200,50) if inner_c >= 0.6 else (50,180,240) if inner_c >= 0.3 else (60,60,220)
+        cv2.putText(canvas, "CONSISTENCY", (cx2, fy + ti(24)), font, tf(0.45), (120,120,120), ti(1), cv2.LINE_AA)
+        cv2.putText(canvas, f"{inner_c:.2f}", (cx2, fy + ti(58)), font, tf(1.0), cons_clr,   ti(2), cv2.LINE_AA)
+
+        (gtw, gth), gbl = cv2.getTextSize(grade_txt, font, tf(1.1), ti(2))
+        gpad = ti(18)
+        bx1  = canvas_w - gtw - gpad * 2 - ti(20)
+        bx2  = canvas_w - ti(20)
+        by1  = fy + ti(8)
+        by2  = by1 + gth + gpad * 2 + gbl
+        cv2.rectangle(canvas, (bx1, by1), (bx2, by2), grade_clr, -1)
+        cv2.putText(canvas, grade_txt, (bx1 + gpad, by2 - gpad - gbl), font, tf(1.1), (18,18,18), ti(2), cv2.LINE_AA)
+
+    else:
+        fy = ctx4.shape[0] + ti(20)
+        cv2.putText(canvas, "No inner border detected", (CTX4, fy + ti(55)),
+                    cv2.FONT_HERSHEY_SIMPLEX, tf(0.9), (80, 80, 220), ti(2), cv2.LINE_AA)
+
+    # Resize to max_width
+    out_scale = min(1.0, max_width / canvas.shape[1])
+    if out_scale < 1.0:
+        out_h  = int(canvas.shape[0] * out_scale)
+        canvas = cv2.resize(canvas, (max_width, out_h), interpolation=cv2.INTER_AREA)
+
+    return canvas
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def analyze_centering(img: np.ndarray) -> CenteringResult:
+def analyze_centering(img: np.ndarray, return_debug_inputs: bool = False):
     t0 = time.time()
     h, w = img.shape[:2]
     logger.info("Analyzing image: %dx%d", w, h)
@@ -598,7 +762,7 @@ def analyze_centering(img: np.ndarray) -> CenteringResult:
     corners, confidence = _find_card_corners(img)
 
     if corners is None:
-        return CenteringResult(
+        r = CenteringResult(
             lr_ratio="0/0", tb_ratio="0/0",
             lr_pct_left=0.0, tb_pct_top=0.0,
             left_px=0, right_px=0, top_px=0, bottom_px=0,
@@ -606,6 +770,7 @@ def analyze_centering(img: np.ndarray) -> CenteringResult:
             psa9_lr_pass=False, psa9_tb_pass=False,
             confidence="card_not_found",
         )
+        return (r, img, None) if return_debug_inputs else r
 
     card    = _perspective_warp(img, corners)
     card_h, card_w = card.shape[:2]
@@ -627,7 +792,7 @@ def analyze_centering(img: np.ndarray) -> CenteringResult:
         # Return an explicit status rather than fabricating 50/50 data from the
         # 10% fallback, which would produce meaningless PSA pass/fail values.
         logger.warning("Inner border detection failed; card has no measurable inner border.")
-        return CenteringResult(
+        r = CenteringResult(
             lr_ratio="N/A", tb_ratio="N/A",
             lr_pct_left=0.0, tb_pct_top=0.0,
             left_px=0, right_px=0, top_px=0, bottom_px=0,
@@ -637,6 +802,7 @@ def analyze_centering(img: np.ndarray) -> CenteringResult:
             card_type="full_art",
             inner_consistency=0.0,
         )
+        return (r, img, corners) if return_debug_inputs else r
 
     left_px, right_px, top_px, bot_px, inner_consistency = inner
     left_px  = max(0, int(round(left_px)))
@@ -674,4 +840,4 @@ def analyze_centering(img: np.ndarray) -> CenteringResult:
 
     logger.info("Result: LR=%s TB=%s confidence=%s elapsed=%.2fs",
                 result.lr_ratio, result.tb_ratio, result.confidence, time.time() - t0)
-    return result
+    return (result, img, corners) if return_debug_inputs else result

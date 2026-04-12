@@ -10,3 +10,7 @@ build/
 .pytest_cache/
 test_*.jpg
 test_*.png
+test_images/
+test_centering.py
+test_sam_seg.py
+mobile_sam.pt

@@ -6,13 +6,14 @@ Endpoints:
   POST /analyze  → multipart image upload → centering JSON
 """
 
+import base64
 import logging
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from centering import analyze_centering
+from centering import analyze_centering, draw_borders_debug
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ async def analyze(file: UploadFile = File(...)):
 
     logger.info("Received image: %d bytes, shape=%s", len(raw), img.shape)
 
-    result = analyze_centering(img)
+    result, orig_img, corners = analyze_centering(img, return_debug_inputs=True)
 
     if result.confidence == "card_not_found":
         raise HTTPException(
@@ -67,4 +68,11 @@ async def analyze(file: UploadFile = File(...)):
             detail="No card detected. Ensure the card is visible against a contrasting background.",
         )
 
-    return result.to_dict()
+    response = result.to_dict()
+
+    if corners is not None:
+        debug_img = draw_borders_debug(orig_img, corners, result, max_width=900)
+        _, buf = cv2.imencode('.jpg', debug_img, [cv2.IMWRITE_JPEG_QUALITY, 82])
+        response['debug_image_b64'] = base64.b64encode(buf).decode('ascii')
+
+    return response
