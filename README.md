@@ -162,7 +162,50 @@ Live URL: https://pokecam-app.web.app
 
 ---
 
-## Future Work
+## Next Steps (pick up here next session)
+
+### 1. Algorithm reliability — same card, different photos give different results
+
+**Problem:** Scanning the same card twice produces different LR/TB numbers. The algorithm is sensitive to photo angle, lighting, and distance, which means measurements aren't reproducible enough to trust for grading decisions.
+
+**Where to look:** `centering.py` — `_find_card_corners()` (outer edge RANSAC) and `_find_inner_borders()` (inner border two-pass scan). Run `test_centering.py --debug` on multiple photos of the same card to see which step is drifting.
+
+**Likely causes:**
+- Perspective warp quality varies with shooting angle — even small tilt changes the warped card shape
+- Inner border scan is sensitive to lighting changes on the card surface
+- The consistency score (see below) can tell you how noisy a given scan was
+
+---
+
+### 2. Understand and surface the consistency score better
+
+**What it is:** After detecting inner border hits across all scanlines, the algorithm builds a histogram of hit positions. `consistency` = fraction of hits that fall within ±15px of the histogram peak. Range 0–1.
+
+- **High (≥ 0.9):** Most scanlines agree on the border position — reliable measurement
+- **Medium (0.3–0.9):** Some scatter — result is probably OK but less certain
+- **Low (< 0.3):** Hits are spread out — algorithm is guessing, result is unreliable
+
+**Current behavior:** Consistency is shown in the `_4_borders` debug image footer but the app only shows a generic "low confidence" warning if `confidence == "low"`. The confidence field is only downgraded to `"low"` if `inner_consistency < 0.25` — a very low bar.
+
+**What to do:** Surface the raw consistency score in the app UI so users know how much to trust each scan. Also consider raising the threshold for downgrading confidence, or refusing to report a grade if consistency is below ~0.5.
+
+---
+
+### 3. Remove %-based search windows for outer and inner border detection
+
+**Problem:** The outer border scan uses `search_frac=0.50` (only looks in the left/right 50% for edges) and the inner border scan uses hardcoded 3–8% and 3–20% windows relative to card size. These fractions are brittle — they assume the card fills a certain portion of the frame and that borders are within a fixed depth range.
+
+**What breaks:** If the card is shot close-up or at an angle, the outer edge may land outside the search window. If it's a card with an unusually wide or narrow design border, the inner window misses it.
+
+**Where to look:**
+- Outer: `_scan_row_edges()` and `_scan_col_edges()` in `centering.py` — the `search_frac` parameter
+- Inner: `_find_inner_borders()` — `x_lo_n / x_hi_n` (Pass 1: 3–8%) and `x_lo_w / x_hi_w` (Pass 2: 3–20%)
+
+**Direction:** Replace fixed % windows with adaptive detection — e.g. scan the full strip and use the histogram to find the dominant peak, rather than constraining the search zone upfront.
+
+---
+
+## Future Work (longer term)
 
 - Card name/set recognition (ML model or Vision API)
 - eBay price lookup by card ID
